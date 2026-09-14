@@ -55,20 +55,26 @@ def agent(obs):
     # ---- Market decisions ----
     market_ops = []
 
-    # Seeds buffer: keep 25 wheat seeds
     wheat_seeds = seeds.get("WHEAT",0)
-    if wheat_seeds < 20 and money > 50:
+    if wheat_seeds < 20 and money > 200:
         need = 20 - wheat_seeds
         max_buy = min(need, int((money-500)//10) if money>500 else need)
         if max_buy>0:
             market_ops.append(["BUY_SEED","WHEAT", max_buy])
             money -= max_buy*10
-    # Melon seeds for premium boost
+    # Strawberry for phase 2 (high value ongoing, 4 yields)
+    straw_seeds = seeds.get("STRAWBERRY",0)
+    if day>=8 and straw_seeds < 10 and money > 500:
+        need_s = 10 - straw_seeds
+        max_buy_s = min(need_s, int((money-500)//100) if money>500 else 1)
+        if max_buy_s>0:
+            market_ops.append(["BUY_SEED","STRAWBERRY", max_buy_s])
+            money -= max_buy_s*100
     melon_price = prices.get("MELON",250)
     melon_seeds = seeds.get("MELON",0)
-    if melon_price>200 and melon_seeds < 5 and money > 200 and day>5:
+    if melon_price>200 and melon_seeds < 5 and money > 200 and 2<=day<=8:
         need_m = 5 - melon_seeds
-        max_buy_m = min(need_m, int((money-500)//80) if money>500 else 1)
+        max_buy_m = min(need_m, int((money-300)//80) if money>300 else 1)
         if max_buy_m>0:
             market_ops.append(["BUY_SEED","MELON", max_buy_m])
             money -= max_buy_m*80
@@ -123,28 +129,37 @@ def agent(obs):
         if money > cost+300:
             market_ops.append(["HIRE"])
             # don't also buy land same turn to respect maxMarketOrdersPerTurn
-    # Buy land if money high and board filling
-    land_cost_map={"NE":1000,"SW":2000,"SE":4000}
-    # order NE->SW->SE
-    land_order=["NE","SW","SE"]
+    # v2-75: only 75 tiles (NW+NE+SW), never buy SE in phase 1
+    land_cost_map={"NE":1000,"SW":2000}
+    land_order=["NE","SW"]
     remaining_land=[q for q in land_order if q not in unlocked_set]
     if remaining_land:
         next_land=remaining_land[0]
         cost_land=land_cost_map[next_land]
-        unlocked_tiles_count = 25*len(unlocked_set)
         used = plant_tiles+coops_total+weed_tiles
         utilization = used / unlocked_tiles_count if unlocked_tiles_count else 1
-        if money > cost_land + 1500 and utilization > 0.5:
+        # aggressive early: buy with low buffer as in replay (bought at 1098 and 654)
+        buffer = 300 if day<10 else 800
+        util_thresh = 0.35 if day<10 else 0.5
+        if money > cost_land + buffer and utilization > util_thresh:
             # prioritize land over hiring
             # remove hire if we need land
             market_ops = [op for op in market_ops if op[0]!="HIRE"]
             market_ops.append(["BUY_LAND"])
 
-    # Buy geese if we have empty coops capacity or can build
-    if day>10 and money>3000 and plant_tiles>5:
-        target_coops = max(4, int(0.15 * unlocked_tiles_count))
+    # v2-75: 14 coops/animals by day12 as in replay
+    if day>=4 and money>400 and unlocked_tiles_count>=25:
+        # build quickly to 14 for 75 tiles
+        if unlocked_tiles_count>=50:
+            target_coops = 14 if day>=8 else 8
+        else:
+            target_coops = 5
     else:
         target_coops = 0
+    # allow sheep/wool as in replay (they used sheep not goose)
+    # we keep GOOSE but also allow SHEEP via same coop? Actually sheep needs pasture, goose needs coop
+    # For now use GOOSE for coop, SHEEP for pasture - count pastures too
+
     # Build coops via farmer actions, buy animals via market
     goose_in_shed = shed.get("GOOSE",0)
     # inventory geese?
@@ -312,19 +327,24 @@ def agent(obs):
     has_seeds = (seeds.get("WHEAT",0)>0 or seeds.get("MELON",0)>0)
     if empty_positions and has_seeds and plant_tiles < max_plants_allowed:
         empty_positions_sorted = sorted(empty_positions, key=lambda p: manhattan(farmer_pos, p))
-        limit = 2
+        limit = 4  # aggressive fill for 75
         remaining = max_plants_allowed - plant_tiles
         limit = min(limit, remaining, len(empty_positions_sorted))
         for (x,y) in empty_positions_sorted[:limit]:
             melon_price = prices.get("MELON",250)
             melon_tiles = sum(1 for row in tiles for t in row if isinstance(t,dict) and t.get("crop")=="MELON")
-            if melon_price>200 and melon_tiles < max(2, unlocked_tiles_count//10) and money>1000 and day>5 and seeds.get("MELON",0)>0:
+            straw_tiles = sum(1 for row in tiles for t in row if isinstance(t,dict) and t.get("crop")=="STRAWBERRY")
+            if melon_price>200 and melon_tiles < max(4, unlocked_tiles_count//12) and money>800 and 2<=day<=8 and seeds.get("MELON",0)>0:
                 tasks.append((3, y,x, "PLANT", "MELON"))
+            elif day>=8 and straw_tiles < max(8, unlocked_tiles_count//5) and seeds.get("STRAWBERRY",0)>0:
+                tasks.append((3, y,x, "PLANT", "STRAWBERRY"))
             else:
                 if seeds.get("WHEAT",0)>0:
                     tasks.append((3, y,x, "PLANT", "WHEAT"))
                 elif seeds.get("MELON",0)>0:
                     tasks.append((3, y,x, "PLANT", "MELON"))
+                elif seeds.get("STRAWBERRY",0)>0:
+                    tasks.append((3, y,x, "PLANT", "STRAWBERRY"))
     # if need coops, add build tasks for empty tiles (after planting limit)
     if coops_total < target_coops and empty_positions and money>1500:
         # build up to 1 coop per day
@@ -374,6 +394,8 @@ def agent(obs):
                     if detail=="WHEAT" and seeds.get("WHEAT",0)==0:
                         continue
                     if detail=="MELON" and seeds.get("MELON",0)==0:
+                        continue
+                    if detail=="STRAWBERRY" and seeds.get("STRAWBERRY",0)==0:
                         continue
                 if act=="FERTILIZE" and fertil_available==0:
                     continue
