@@ -335,8 +335,8 @@ def agent(obs):
     has_seeds = ( (seeds.get("WHEAT",0)>0 and can_plant_wheat) or (seeds.get("MELON",0)>0 and can_plant_melon) or (seeds.get("STRAWBERRY",0)>0 and can_plant_straw))
     if empty_positions and has_seeds and plant_tiles < max_plants_allowed and day < 27:
         empty_positions_sorted = sorted(empty_positions, key=lambda p: manhattan(farmer_pos, p))
-        # aggressive fill to 60/75 as in replay: 4/turn after day10
-        limit = 4 if day>=10 else 2
+        # 60/75 as in replay: 8/turn after day10 with 11 hands
+        limit = 8 if day>=10 else 3
         remaining = max_plants_allowed - plant_tiles
         limit = min(limit, remaining, len(empty_positions_sorted))
         for (x,y) in empty_positions_sorted[:limit]:
