@@ -57,25 +57,25 @@ def agent(obs):
     market_ops = []
 
     wheat_seeds = seeds.get("WHEAT",0)
-    if wheat_seeds < 20 and money > 200:
+    if wheat_seeds < 20 and money > 35:
         need = 20 - wheat_seeds
-        max_buy = min(need, int((money-500)//10) if money>500 else need)
+        max_buy = min(need, int((money-35)//10) if money>35 else 0)
         if max_buy>0:
             market_ops.append(["BUY_SEED","WHEAT", max_buy])
             money -= max_buy*10
-    # Strawberry for phase 2 (high value ongoing, 4 yields)
+    # Strawberry for phase 2 (high value ongoing, 4 yields) - money>35 as replay 108777858 (spent to 60$)
     straw_seeds = seeds.get("STRAWBERRY",0)
-    if day>=8 and straw_seeds < 10 and money > 500:
+    if day>=8 and straw_seeds < 10 and money > 35:
         need_s = 10 - straw_seeds
-        max_buy_s = min(need_s, int((money-500)//100) if money>500 else 1)
+        max_buy_s = min(need_s, int((money-35)//100) if money>35 else 0)
         if max_buy_s>0:
             market_ops.append(["BUY_SEED","STRAWBERRY", max_buy_s])
             money -= max_buy_s*100
     melon_price = prices.get("MELON",250)
     melon_seeds = seeds.get("MELON",0)
-    if melon_price>200 and melon_seeds < 5 and money > 200 and 2<=day<=8:
+    if melon_price>200 and melon_seeds < 5 and money > 35 and 2<=day<=8:
         need_m = 5 - melon_seeds
-        max_buy_m = min(need_m, int((money-300)//80) if money>300 else 1)
+        max_buy_m = min(need_m, int((money-35)//80) if money>35 else 0)
         if max_buy_m>0:
             market_ops.append(["BUY_SEED","MELON", max_buy_m])
             money -= max_buy_m*80
@@ -130,7 +130,7 @@ def agent(obs):
     if hires_today < desired_hands:
         fib=[1,1,2,3,5,8,13,21]
         cost = fib[hires_today] if hires_today < len(fib) else 30
-        if money > cost+300:
+        if money > cost and money > 35:
             market_ops.append(["HIRE"])
             # don't also buy land same turn to respect maxMarketOrdersPerTurn
     # v2-75: only 75 tiles (NW+NE+SW), never buy SE in phase 1
@@ -142,18 +142,17 @@ def agent(obs):
         cost_land=land_cost_map[next_land]
         used = plant_tiles+coops_total+weed_tiles
         utilization = used / unlocked_tiles_count if unlocked_tiles_count else 1
-        # aggressive early: buy with low buffer as in replay (bought at 1098 and 654)
-        buffer = 300 if day<10 else 800
-        util_thresh = 0.35 if day<10 else 0.5
+        # money>35: spend to 35$ to fill 60/75 as replay 108777858 (went to 60$)
+        buffer = 35
+        util_thresh = 0.30 if day<10 else 0.45
         if money > cost_land + buffer and utilization > util_thresh:
             # prioritize land over hiring
             # remove hire if we need land
             market_ops = [op for op in market_ops if op[0]!="HIRE"]
             market_ops.append(["BUY_LAND"])
 
-    # v2-75: 14 coops/animals by day12 as in replay
-    if day>=4 and money>400 and unlocked_tiles_count>=25:
-        # build quickly to 14 for 75 tiles
+    # v2-75: 14 coops/animals by day12 as in replay - money>35 aggressive
+    if day>=4 and money>35 and unlocked_tiles_count>=25:
         if unlocked_tiles_count>=50:
             target_coops = 14 if day>=8 else 8
         else:
@@ -171,10 +170,10 @@ def agent(obs):
     total_goose_available = goose_in_shed + goose_in_inv
     # if we need more coops built, farmer will build; market buys geese
     # only buy geese if we have empty coops to place them
-    if coops_empty>0 and animals_total < target_coops and money > 800:
+    if coops_empty>0 and animals_total < target_coops and money > 35:
         need_geese = coops_empty
         if need_geese>0:
-            buy_n = min(2, need_geese, int((money-800)//300) if money>800 else 1)
+            buy_n = min(2, need_geese, int((money-35)//300) if money>35 else 0)
             if buy_n>0 and not any(op[0]=="BUY_LAND" for op in market_ops):
                 market_ops.append(["BUY_ANIMAL","GOOSE", buy_n])
 
@@ -350,7 +349,7 @@ def agent(obs):
             melon_price = prices.get("MELON",250)
             melon_tiles = sum(1 for row in tiles for t in row if isinstance(t,dict) and t.get("crop")=="MELON")
             straw_tiles = sum(1 for row in tiles for t in row if isinstance(t,dict) and t.get("crop")=="STRAWBERRY")
-            if can_plant_melon and melon_price>200 and melon_tiles < max(4, unlocked_tiles_count//12) and money>800 and 2<=day<=8 and seeds.get("MELON",0)>0:
+            if can_plant_melon and melon_price>200 and melon_tiles < max(4, unlocked_tiles_count//12) and money>35 and 2<=day<=8 and seeds.get("MELON",0)>0:
                 tasks.append((3, y,x, "PLANT", "MELON"))
             elif can_plant_straw and day>=8 and straw_tiles < max(8, unlocked_tiles_count//5) and seeds.get("STRAWBERRY",0)>0:
                 tasks.append((3, y,x, "PLANT", "STRAWBERRY"))
@@ -360,12 +359,10 @@ def agent(obs):
                 tasks.append((3, y,x, "PLANT", "MELON"))
             elif seeds.get("STRAWBERRY",0)>0 and can_plant_straw:
                 tasks.append((3, y,x, "PLANT", "STRAWBERRY"))
-    # if need coops, add build tasks for empty tiles (after planting limit)
-    if coops_total < target_coops and empty_positions and money>1500:
-        # build up to 1 coop per day
+    # if need coops, add build tasks for empty tiles (money>35)
+    if coops_total < target_coops and empty_positions and money>35:
         empty_sorted = sorted(empty_positions, key=lambda p: manhattan(farmer_pos, p))
-        # skip those already used for planting (first 2)
-        candidates = empty_sorted[2:] if len(empty_sorted)>2 else []
+        candidates = empty_sorted[3:] if len(empty_sorted)>3 else []
         if candidates:
             x,y = candidates[0]
             tasks.append((7, y,x, "BUILD_COOP", None))
