@@ -26,6 +26,7 @@ def agent(obs):
     private = obs.get("private", {})
     market = obs.get("market", {})
     town = obs.get("town", {})
+    is_shop_open_day = (day % 3 == 0)
 
     if not farms or player >= len(farms):
         return {"farmer":["PASS"],"hands":[],"market":[]}
@@ -108,13 +109,13 @@ def agent(obs):
                         animals_total+=1
 
     unlocked_tiles_count = 25*len(unlocked_set)
-    # end-season: keep max hands for final harvest
-    if day >= 27:
+    is_shop_open_day = (day % 3 == 0)
+    if day >= 27 or is_shop_open_day:
         target_hands = 11
     else:
         target_hands = max(2, unlocked_tiles_count//7)
         target_hands = min(11, target_hands)
-    if day < 3:
+    if day < 3 or is_shop_open_day or day>=27:
         desired_hands = target_hands
     else:
         if plant_tiles + weed_tiles > 10 or day>=27:
@@ -204,14 +205,20 @@ def agent(obs):
         if force_sell:
             should=True
         elif price >= floor:
-            # for premium crash items, be extra strict: only sell if price >= base*0.8
             if item in ("STRAWBERRY","MELON","MILK","WOOL"):
-                if price >= BASE[item]*0.7:
+                # on shop open days, sell even at 0.5*base to capture demand spike
+                thresh = 0.5 if is_shop_open_day else 0.7
+                if price >= BASE[item]*thresh:
                     should=True
             else:
                 should=True
+        elif is_shop_open_day and item in ("MILK","WOOL","STRAWBERRY","TOMATO","EGG"):
+            # shop opening day: sell at high price even if below floor, expect price rise
+            if price >= BASE[item]*0.6:
+                should=True
+            else:
+                should=False
         else:
-            # price below floor -> hold unless force
             should=False
 
         if should:
