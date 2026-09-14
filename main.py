@@ -108,18 +108,21 @@ def agent(obs):
                         animals_total+=1
 
     unlocked_tiles_count = 25*len(unlocked_set)
-    target_hands = max(1, unlocked_tiles_count//12)
-    target_hands = min(5, target_hands)
+    # end-season: keep max hands for final harvest
+    if day >= 27:
+        target_hands = 11
+    else:
+        target_hands = max(2, unlocked_tiles_count//7)
+        target_hands = min(11, target_hands)
     if day < 3:
         desired_hands = target_hands
     else:
-        # also consider current weed/plant load
-        if plant_tiles + weed_tiles > 10:
+        if plant_tiles + weed_tiles > 10 or day>=27:
             desired_hands = target_hands
         elif plant_tiles + weed_tiles > 5:
-            desired_hands = max(1, target_hands-1)
+            desired_hands = max(2, target_hands-2)
         else:
-            desired_hands = 0
+            desired_hands = max(1, target_hands-2) if day<20 else target_hands
 
     # Track hires needed
     # Only hire if hour < 12 (morning) to have time to work
@@ -175,8 +178,9 @@ def agent(obs):
                 market_ops.append(["BUY_ANIMAL","GOOSE", buy_n])
 
     max_plants_allowed = max(12, unlocked_tiles_count - 3)
-    # Selling logic: price-aware
-    force_sell = total_shed_items >= 85
+    # end-season filtering: clear board and sell all
+    is_end_season = day >= 27
+    force_sell = total_shed_items >= 85 or is_end_season
     for item in ["WHEAT","EGG","CARROT","TOMATO","FERTILIZER","MILK","WOOL","STRAWBERRY","MELON"]:
         cnt = shed.get(item,0)
         if cnt<=0: continue
@@ -251,7 +255,7 @@ def agent(obs):
                 continue
             kind=t.get("kind")
             if kind=="WEED":
-                tasks.append((6, y,x, "DIG", None))
+                tasks.append((1 if is_end_season else 6, y,x, "DIG", None))
             elif kind=="PLANT":
                 crop=t.get("crop","WHEAT")
                 info=CROPS.get(crop, CROPS["WHEAT"])
@@ -269,10 +273,12 @@ def agent(obs):
                     bonus_start = (info["max"]+1)//2
                     if not info["ongoing"] and bonus_start <= age <= info["max"] and fertil_until < day:
                         tasks.append((3, y,x, "FERTILIZE", None))
-                # harvesting
                 should_harvest=False
                 harvest_prio=5
-                if info["ongoing"]:
+                if is_end_season and yield_units>0:
+                    should_harvest=True
+                    harvest_prio=1
+                elif info["ongoing"]:
                     if yield_units>0:
                         should_harvest=True
                         harvest_prio=5
@@ -280,7 +286,7 @@ def agent(obs):
                     if age >= info["max"]:
                         if yield_units>0:
                             should_harvest=True
-                            harvest_prio=1  # urgent, about to decay
+                            harvest_prio=1
                     elif age >= info["max"]-1 and yield_units>=3:
                         should_harvest=True
                         harvest_prio=2
@@ -313,38 +319,40 @@ def agent(obs):
                         tasks.append((5, y,x, "COLLECT_FERTILIZER", None))
                     if not cared and fed:
                         tasks.append((5, y,x, "CARE", None))
+                    harvest_prio_a = 1 if is_end_season else 5
                     if y_units>0:
-                        # harvest animal product if near cap or on interval
-                        # goose daily, so harvest if >=1, cow/sheep interval based
-                        # harvest when >= max_held-1 to avoid cap loss
                         max_held=4 if animal=="GOOSE" else 6
                         if y_units>=1:
-                            # for low-vol, harvest promptly to get cash flow, but don't wait to cap
-                            tasks.append((5, y,x, "HARVEST", None))
+                            tasks.append((harvest_prio_a, y,x, "HARVEST", None))
             # else ignore
     # Staggered planting/building: limit to 3 per day, nearest to farmer
     # Prioritize filling board but evenly
-    has_seeds = (seeds.get("WHEAT",0)>0 or seeds.get("MELON",0)>0)
-    if empty_positions and has_seeds and plant_tiles < max_plants_allowed:
+    # stop planting crops that won't mature before season end (720 steps = day29)
+    # wheat needs 4 days, melon 12, strawberry 10
+    can_plant_wheat = day <= 26
+    can_plant_melon = day <= 18
+    can_plant_straw = day <= 20
+    has_seeds = ( (seeds.get("WHEAT",0)>0 and can_plant_wheat) or (seeds.get("MELON",0)>0 and can_plant_melon) or (seeds.get("STRAWBERRY",0)>0 and can_plant_straw))
+    if empty_positions and has_seeds and plant_tiles < max_plants_allowed and day < 27:
         empty_positions_sorted = sorted(empty_positions, key=lambda p: manhattan(farmer_pos, p))
-        limit = 4  # aggressive fill for 75
+        # aggressive fill to 60/75 as in replay: 4/turn after day10
+        limit = 4 if day>=10 else 2
         remaining = max_plants_allowed - plant_tiles
         limit = min(limit, remaining, len(empty_positions_sorted))
         for (x,y) in empty_positions_sorted[:limit]:
             melon_price = prices.get("MELON",250)
             melon_tiles = sum(1 for row in tiles for t in row if isinstance(t,dict) and t.get("crop")=="MELON")
             straw_tiles = sum(1 for row in tiles for t in row if isinstance(t,dict) and t.get("crop")=="STRAWBERRY")
-            if melon_price>200 and melon_tiles < max(4, unlocked_tiles_count//12) and money>800 and 2<=day<=8 and seeds.get("MELON",0)>0:
+            if can_plant_melon and melon_price>200 and melon_tiles < max(4, unlocked_tiles_count//12) and money>800 and 2<=day<=8 and seeds.get("MELON",0)>0:
                 tasks.append((3, y,x, "PLANT", "MELON"))
-            elif day>=8 and straw_tiles < max(8, unlocked_tiles_count//5) and seeds.get("STRAWBERRY",0)>0:
+            elif can_plant_straw and day>=8 and straw_tiles < max(8, unlocked_tiles_count//5) and seeds.get("STRAWBERRY",0)>0:
                 tasks.append((3, y,x, "PLANT", "STRAWBERRY"))
-            else:
-                if seeds.get("WHEAT",0)>0:
-                    tasks.append((3, y,x, "PLANT", "WHEAT"))
-                elif seeds.get("MELON",0)>0:
-                    tasks.append((3, y,x, "PLANT", "MELON"))
-                elif seeds.get("STRAWBERRY",0)>0:
-                    tasks.append((3, y,x, "PLANT", "STRAWBERRY"))
+            elif seeds.get("WHEAT",0)>0 and can_plant_wheat:
+                tasks.append((3, y,x, "PLANT", "WHEAT"))
+            elif seeds.get("MELON",0)>0 and can_plant_melon:
+                tasks.append((3, y,x, "PLANT", "MELON"))
+            elif seeds.get("STRAWBERRY",0)>0 and can_plant_straw:
+                tasks.append((3, y,x, "PLANT", "STRAWBERRY"))
     # if need coops, add build tasks for empty tiles (after planting limit)
     if coops_total < target_coops and empty_positions and money>1500:
         # build up to 1 coop per day
